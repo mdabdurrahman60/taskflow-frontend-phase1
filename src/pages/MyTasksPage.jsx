@@ -27,6 +27,7 @@ import {
   getEligibleTaskAssignees,
   normalizeTaskType,
 } from '../permissions/taskPermissions'
+import { canViewProject } from '../permissions/projectPermissions'
 
 const ALL = 'All'
 const RichTextEditor = lazy(() => import('../components/ui/RichTextEditor'))
@@ -39,7 +40,7 @@ const defaultTaskForm = (user) => ({
   taskType: user.role === 'hr' ? 'hr' : user.role === 'executive' ? 'personal' : user.role === 'support' ? 'support' : 'operational',
   assigneeId: user.id,
   departmentId: user.departmentId,
-  projectId: 'p-launch',
+  projectId: '',
   tags: '',
   parentTaskId: '',
   dueDate: '',
@@ -56,7 +57,7 @@ function priorityTone(priority) {
 }
 
 export default function MyTasksPage() {
-  const { currentUser, users, departments, tasks, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addNotification, addActivity } = useApp()
+  const { currentUser, users, departments, tasks, projects, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addNotification, addActivity } = useApp()
   const previousUserId = useRef(currentUser.id)
   const [searchParams, setSearchParams] = useSearchParams()
   const toast = useToast()
@@ -76,13 +77,17 @@ export default function MyTasksPage() {
   const [newComment, setNewComment] = useState('')
   const [newSubtask, setNewSubtask] = useState({ title: '', assigneeId: currentUser.id, dueDate: '', description: '', priority: 'Medium', status: 'To Do' })
   const [subtaskErrors, setSubtaskErrors] = useState({})
+  const accessibleProjects = useMemo(
+    () => projects.filter((project) => canViewProject(currentUser, project, tasks)),
+    [projects, currentUser, tasks],
+  )
 
   const eligibleTaskAssignees = useMemo(() => {
     const selectedParent = tasks.find((task) => task.id === taskForm.parentTaskId)
     if (selectedParent) return getEligibleSubtaskAssignees({ user: currentUser, users, parentTask: selectedParent })
     const context = {
       departmentId: taskForm.departmentId || currentUser.departmentId,
-      projectId: taskForm.projectId || 'p-launch',
+      projectId: taskForm.projectId,
       taskType: taskForm.taskType,
     }
     return getEligibleTaskAssignees({ user: currentUser, users, taskContext: context })
@@ -170,7 +175,7 @@ export default function MyTasksPage() {
       taskType: task.taskType || normalizeTaskType(task),
       assigneeId: task.assigneeId,
       departmentId: task.departmentId,
-      projectId: task.projectId || 'p-launch',
+      projectId: task.projectId || '',
       tags: (task.tags || []).join(', '),
       parentTaskId: task.parentTaskId || '',
       dueDate: task.dueDate || '',
@@ -185,6 +190,9 @@ export default function MyTasksPage() {
     if (!taskForm.assigneeId) errors.assigneeId = 'Choose an assignee.'
     if (!taskForm.dueDate) errors.dueDate = 'Due date is required.'
     if (!taskForm.departmentId) errors.departmentId = 'Department is required.'
+    if (taskForm.projectId && !accessibleProjects.some((project) => project.id === taskForm.projectId && project.departmentId === taskForm.departmentId)) {
+      errors.projectId = 'Choose a project available in the selected department.'
+    }
 
     const targetUser = users.find((user) => user.id === taskForm.assigneeId)
     const permissionContext = {
@@ -610,6 +618,7 @@ export default function MyTasksPage() {
                   <Badge tone={priorityTone(selectedTask.priority)}>{selectedTask.priority}</Badge>
                   <Badge tone="neutral">{selectedTask.departmentId ? departments.find((d) => d.id === selectedTask.departmentId)?.name : 'Unassigned department'}</Badge>
                   <Badge tone="blue">{selectedTask.subtasks?.length ?? 0} subtasks</Badge>
+                  {selectedTask.projectId && <Badge tone="violet">{projects.find((project) => project.id === selectedTask.projectId)?.name || 'Project'} · {selectedTask.projectId}</Badge>}
                 </div>
 
                 {selectedTask.description ? <TaskDescription value={selectedTask.description} /> : <p className="text-[13px] text-ink-2">No description provided.</p>}
@@ -776,7 +785,7 @@ export default function MyTasksPage() {
                 </div>
                 <div>
                   <label htmlFor="task-department" className="mb-1 block text-[12px] font-medium text-ink">Department</label>
-                  <select id="task-department" value={taskForm.departmentId} onChange={(e) => setTaskForm({ ...taskForm, departmentId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
+                  <select id="task-department" value={taskForm.departmentId} onChange={(e) => setTaskForm({ ...taskForm, departmentId: e.target.value, projectId: accessibleProjects.some((project) => project.id === taskForm.projectId && project.departmentId === e.target.value) ? taskForm.projectId : '' })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
                     {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
                   </select>
                   {taskErrors.departmentId && <p className="mt-1 text-[11px] text-brand-700">{taskErrors.departmentId}</p>}
@@ -796,8 +805,10 @@ export default function MyTasksPage() {
                 <div>
                   <label htmlFor="task-project" className="mb-1 block text-[12px] font-medium text-ink">Project</label>
                   <select id="task-project" value={taskForm.projectId} onChange={(e) => setTaskForm({ ...taskForm, projectId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
-                    {['p-launch', 'p-platform', 'p-people', 'p-it', 'p-finance', 'p-partners'].map((projectId) => <option key={projectId} value={projectId}>{projectId}</option>)}
+                    <option value="">No project</option>
+                    {accessibleProjects.filter((project) => project.departmentId === taskForm.departmentId).map((project) => <option key={project.id} value={project.id}>{project.name} · {project.id}</option>)}
                   </select>
+                  {taskErrors.projectId && <p className="mt-1 text-[11px] text-brand-700">{taskErrors.projectId}</p>}
                 </div>
                 <div>
                   <label htmlFor="task-due-date" className="mb-1 block text-[12px] font-medium text-ink">Due date</label>

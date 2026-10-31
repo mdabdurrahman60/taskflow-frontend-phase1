@@ -24,6 +24,12 @@ import {
   canViewTask,
   canViewTicket,
 } from '../permissions/taskPermissions'
+import {
+  canAssociateTaskWithProject,
+  canManageProject,
+  eligibleProjectManagers,
+  eligibleProjectMembers,
+} from '../permissions/projectPermissions'
 import { daysFromNow, hoursAgo, minutesAgo, toISODate } from '../utils/dates'
 
 const STORAGE_KEY = 'taskflow.demo.state.v1'
@@ -45,6 +51,14 @@ function validManagerAssignment(managerId, departmentId, users) {
   const manager = users.find((user) => user.id === managerId)
   if (!manager || manager.status !== 'Active' || !['superadmin', 'admin', 'manager', 'hr'].includes(manager.role)) return false
   return manager.departmentId === departmentId || ['superadmin', 'admin'].includes(manager.role)
+}
+
+function validProjectDate(value) {
+  if (!value) return true
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
 }
 
 function createInitialNotifications() {
@@ -92,6 +106,7 @@ function readStoredState() {
     return {
       ...parsed,
       currentUserId: parsed.users.some((user) => user.id === parsed.currentUserId) ? parsed.currentUserId : readStoredUserId() || DEFAULT_USER_ID,
+      projects: normalizeStoredProjects(parsed.projects, parsed.users, parsed.tasks),
       tasks: parsed.tasks.map((task) => ({ ...task, comments: Array.isArray(task.comments) ? task.comments : [], subtasks: Array.isArray(task.subtasks) ? task.subtasks : [] })),
       tickets: parsed.tickets.map((ticket) => ({ ...ticket, updates: Array.isArray(ticket.updates) ? ticket.updates : [] })),
     }
@@ -268,13 +283,38 @@ function buildInitialTickets() {
 
 function buildInitialProjects() {
   return [
-    { id: 'p-launch', name: 'Product Launch', status: 'Active', ownerId: 'u-imran' },
-    { id: 'p-platform', name: 'Platform Release', status: 'Active', ownerId: 'u-mahmudul' },
-    { id: 'p-people', name: 'People Ops', status: 'Planning', ownerId: 'u-maliha' },
-    { id: 'p-it', name: 'IT Modernization', status: 'Active', ownerId: 'u-zubair' },
-    { id: 'p-finance', name: 'Finance Review', status: 'Closed', ownerId: 'u-sabrina' },
-    { id: 'p-partners', name: 'Vendor Onboarding', status: 'Active', ownerId: 'u-imran' },
+    { id: 'p-launch', name: 'Product Launch', description: 'Coordinate campaign assets and launch scheduling.', projectManagerId: 'u-imran', ownerId: 'u-imran', teamMemberIds: ['u-ayesha', 'u-sarah', 'u-rahim', 'u-tanvir', 'u-nusrat'], departmentId: 'd-mkt', priority: 'High', status: 'Active', startDate: daysFromNow(-14), deadline: daysFromNow(30), color: '#DC2626' },
+    { id: 'p-platform', name: 'Platform Release', description: 'Prepare and deliver the next platform release.', projectManagerId: 'u-mahmudul', ownerId: 'u-mahmudul', teamMemberIds: ['u-shafiq', 'u-lamia', 'u-rafi'], departmentId: 'd-eng', priority: 'Critical', status: 'Active', startDate: daysFromNow(-10), deadline: daysFromNow(21), color: '#2563EB' },
+    { id: 'p-people', name: 'People Ops', description: 'Coordinate people operations initiatives.', projectManagerId: 'u-maliha', ownerId: 'u-maliha', teamMemberIds: ['u-rubel'], departmentId: 'd-hr', priority: 'Medium', status: 'Planning', startDate: daysFromNow(1), deadline: daysFromNow(45), color: '#7C3AED' },
+    { id: 'p-it', name: 'IT Modernization', description: 'Improve internal systems and IT operations.', projectManagerId: 'u-zubair', ownerId: 'u-zubair', teamMemberIds: ['u-arif', 'u-tasnim'], departmentId: 'd-it', priority: 'High', status: 'Active', startDate: daysFromNow(-20), deadline: daysFromNow(60), color: '#0891B2' },
+    { id: 'p-finance', name: 'Finance Review', description: 'Review financial operations and reporting.', projectManagerId: 'u-sabrina', ownerId: 'u-sabrina', teamMemberIds: ['u-tahmid', 'u-joya'], departmentId: 'd-fin', priority: 'Low', status: 'Completed', startDate: daysFromNow(-60), deadline: daysFromNow(-2), color: '#16A34A' },
+    { id: 'p-partners', name: 'Vendor Onboarding', description: 'Streamline partner and vendor onboarding.', projectManagerId: 'u-imran', ownerId: 'u-imran', teamMemberIds: ['u-ayesha', 'u-rahim'], departmentId: 'd-mkt', priority: 'Medium', status: 'Active', startDate: daysFromNow(-5), deadline: daysFromNow(35), color: '#D97706' },
   ]
+}
+
+function normalizeStoredProjects(projects, users, tasks) {
+  return projects.map((project) => {
+    const projectManagerId = project.projectManagerId || project.ownerId || null
+    const linkedTasks = tasks.filter((task) => task.projectId === project.id)
+    const departmentId = project.departmentId
+      || users.find((user) => user.id === projectManagerId)?.departmentId
+      || linkedTasks[0]?.departmentId
+      || ''
+    return {
+      ...project,
+      projectManagerId,
+      ownerId: project.ownerId || projectManagerId,
+      teamMemberIds: Array.isArray(project.teamMemberIds)
+        ? project.teamMemberIds
+        : [...new Set(linkedTasks.map((task) => task.assigneeId).filter(Boolean))],
+      departmentId,
+      priority: project.priority || 'Medium',
+      status: project.status === 'Closed' ? 'Completed' : (project.status || 'Planning'),
+      startDate: project.startDate || '',
+      deadline: project.deadline || '',
+      description: project.description || '',
+    }
+  })
 }
 
 function createInitialState(currentUserId) {
@@ -411,6 +451,16 @@ function reducer(state, action) {
       return { ...state, departments: [...state.departments, action.department] }
     case 'UPDATE_DEPARTMENT':
       return { ...state, departments: state.departments.map((department) => (department.id === action.id ? { ...department, ...action.changes } : department)) }
+    case 'ADD_PROJECT':
+      return { ...state, projects: [action.project, ...state.projects] }
+    case 'UPDATE_PROJECT':
+      return { ...state, projects: state.projects.map((project) => (project.id === action.id ? { ...project, ...action.changes } : project)) }
+    case 'DELETE_PROJECT':
+      return {
+        ...state,
+        projects: state.projects.filter((project) => project.id !== action.id),
+        tasks: state.tasks.map((task) => (task.projectId === action.id ? { ...task, projectId: null } : task)),
+      }
     case 'ADD_ACTIVITY':
       return {
         ...state,
@@ -472,6 +522,12 @@ export function AppProvider({ children }) {
     if (!task || !canEditTask(currentUser, task).allowed) return false
     if (['id', 'creatorId', 'reporterId', 'createdAt', 'sourceTicketId', 'comments', 'subtasks'].some((key) => key in changes)) return false
     if (changes.parentTaskId) return false
+    const projectId = changes.projectId === '' ? null : (changes.projectId ?? task.projectId)
+    if (projectId) {
+      const project = state.projects.find((item) => item.id === projectId)
+      const departmentId = changes.departmentId ?? task.departmentId
+      if (!canAssociateTaskWithProject(currentUser, project, departmentId)) return false
+    }
     if (changes.status !== undefined && changes.status !== task.status && !canChangeTaskStatus(currentUser, task).allowed) return false
     if (changes.assigneeId !== undefined && changes.assigneeId !== task.assigneeId) {
       const targetUser = state.users.find((user) => user.id === changes.assigneeId)
@@ -482,9 +538,24 @@ export function AppProvider({ children }) {
       const targetUser = state.users.find((user) => user.id === (changes.assigneeId ?? task.assigneeId))
       if (!canAssignTask(currentUser, targetUser, { ...task, ...changes }).allowed) return false
     }
-    dispatch({ type: 'UPDATE_TASK', id, changes })
+    dispatch({ type: 'UPDATE_TASK', id, changes: changes.projectId === '' ? { ...changes, projectId: null } : changes })
+    if (changes.projectId !== undefined && (changes.projectId || null) !== (task.projectId || null)) {
+      const projectId = changes.projectId || null
+      const project = state.projects.find((item) => item.id === projectId) || state.projects.find((item) => item.id === task.projectId)
+      if (project) {
+        const now = new Date().toISOString()
+        dispatch({ type: 'ADD_ACTIVITY', entry: { id: makeUniqueId('a', state.activity), userId: currentUser.id, type: 'project', projectId: project.id, text: projectId
+          ? `${currentUser.name} linked task "${task.title}" to "${project.name}".`
+          : `${currentUser.name} removed task "${task.title}" from "${project.name}".`, createdAt: now } })
+        if (projectId) {
+          for (const userId of new Set([project.projectManagerId, ...(project.teamMemberIds || [])].filter(Boolean))) {
+            if (userId !== currentUser.id && userId !== (changes.assigneeId ?? task.assigneeId)) dispatch({ type: 'ADD_NOTIFICATION', notification: { id: makeUniqueId('n', state.notifications), userId, type: 'project', title: 'Task added to project', body: `"${task.title}" was linked to "${project.name}".`, link: '/projects', createdAt: now, read: false } })
+          }
+        }
+      }
+    }
     return true
-  }, [currentUser, state.tasks, state.users])
+  }, [currentUser, state.activity, state.notifications, state.projects, state.tasks, state.users])
 
   const createTask = useCallback((task) => {
     if (task.parentTaskId) return false
@@ -497,8 +568,11 @@ export function AppProvider({ children }) {
     }
     const assignee = state.users.find((user) => user.id === task.assigneeId)
     if (!canCreateTask(currentUser, taskContext).allowed || !canAssignTask(currentUser, assignee, taskContext).allowed) return false
+    const projectId = task.projectId || null
+    if (projectId && !canAssociateTaskWithProject(currentUser, state.projects.find((project) => project.id === projectId), task.departmentId)) return false
     const normalized = {
       ...task,
+      projectId,
       id: task.id && !state.tasks.some((existing) => existing.id === task.id) ? task.id : makeUniqueId('T', state.tasks),
       creatorId: currentUser.id,
       reporterId: currentUser.id,
@@ -507,8 +581,16 @@ export function AppProvider({ children }) {
       createdAt: task.createdAt || new Date().toISOString(),
     }
     dispatch({ type: 'ADD_TASK', task: normalized })
+    const project = state.projects.find((item) => item.id === projectId)
+    if (project) {
+      const now = new Date().toISOString()
+      dispatch({ type: 'ADD_ACTIVITY', entry: { id: makeUniqueId('a', state.activity), userId: currentUser.id, type: 'project', projectId, text: `${currentUser.name} added task "${normalized.title}" to "${project.name}".`, createdAt: now } })
+      for (const userId of new Set([project.projectManagerId, ...(project.teamMemberIds || [])].filter(Boolean))) {
+        if (userId !== currentUser.id && userId !== normalized.assigneeId) dispatch({ type: 'ADD_NOTIFICATION', notification: { id: makeUniqueId('n', state.notifications), userId, type: 'project', title: 'Task added to project', body: `"${normalized.title}" was added to "${project.name}".`, link: '/projects', createdAt: now, read: false } })
+      }
+    }
     return normalized.id
-  }, [currentUser, state.tasks, state.tickets, state.users])
+  }, [currentUser, state.activity, state.notifications, state.projects, state.tasks, state.tickets, state.users])
 
   const deleteTask = useCallback((id) => {
     const task = state.tasks.find((item) => item.id === id)
@@ -612,6 +694,101 @@ export function AppProvider({ children }) {
     return true
   }, [currentUser, state.tickets])
 
+  const projectFormIsValid = useCallback((project, existingId = null) => {
+    if (typeof project.name !== 'string' || !project.name.trim() || typeof project.id !== 'string' || !project.id.trim()
+      || !state.departments.some((department) => department.id === project.departmentId)) return false
+    if (!canManageProject(currentUser, project)) return false
+    if (!validProjectDate(project.startDate) || !validProjectDate(project.deadline)) return false
+    if (project.startDate && project.deadline && project.deadline < project.startDate) return false
+    if (!['Low', 'Medium', 'High', 'Critical'].includes(project.priority)) return false
+    if (!['Planning', 'Active', 'On Hold', 'Completed', 'Cancelled'].includes(project.status)) return false
+    if (project.budget !== '' && project.budget != null && (!Number.isFinite(Number(project.budget)) || Number(project.budget) < 0)) return false
+    if (!existingId && state.projects.some((item) => item.id.toLowerCase() === project.id.toLowerCase())) return false
+    if (project.color && !/^#[0-9a-f]{6}$/i.test(project.color)) return false
+    if (project.projectManagerId && !eligibleProjectManagers(currentUser, state.users, project.departmentId).some((user) => user.id === project.projectManagerId)) return false
+    const eligibleMembers = new Set(eligibleProjectMembers(currentUser, state.users, project.departmentId).map((user) => user.id))
+    return Array.isArray(project.teamMemberIds) && new Set(project.teamMemberIds).size === project.teamMemberIds.length
+      && project.teamMemberIds.every((userId) => eligibleMembers.has(userId))
+  }, [currentUser, state.departments, state.projects, state.users])
+
+  const generateProjectId = useCallback(() => makeUniqueId('PRJ', state.projects), [state.projects])
+
+  const createProject = useCallback((project) => {
+    if (!project || typeof project !== 'object' || typeof project.name !== 'string' || !Array.isArray(project.teamMemberIds ?? [])) return false
+    const candidate = {
+      ...project,
+      name: project.name?.trim(),
+      teamMemberIds: [...new Set(project.teamMemberIds || [])],
+    }
+    if (!canManageProject(currentUser, candidate) || !projectFormIsValid(candidate)) return false
+    const now = new Date().toISOString()
+    const normalized = {
+      ...candidate,
+      projectManagerId: candidate.projectManagerId || null,
+      ownerId: candidate.projectManagerId || null,
+      description: candidate.description || '',
+      budget: candidate.budget === '' || candidate.budget == null ? null : Number(candidate.budget),
+      createdBy: currentUser.id,
+      createdAt: now,
+      updatedAt: now,
+    }
+    dispatch({ type: 'ADD_PROJECT', project: normalized })
+    dispatch({ type: 'ADD_ACTIVITY', entry: { id: makeUniqueId('a', state.activity), userId: currentUser.id, type: 'project', projectId: normalized.id, text: `${currentUser.name} created project "${normalized.name}".`, createdAt: now } })
+    for (const userId of new Set([normalized.projectManagerId, ...normalized.teamMemberIds].filter(Boolean))) {
+      if (userId !== currentUser.id) dispatch({ type: 'ADD_NOTIFICATION', notification: { id: makeUniqueId('n', state.notifications), userId, type: 'project', title: 'Added to a project', body: `${currentUser.name} added you to "${normalized.name}".`, link: '/projects', createdAt: now, read: false } })
+    }
+    return normalized.id
+  }, [currentUser, projectFormIsValid, state.activity, state.notifications])
+
+  const updateProject = useCallback((id, changes) => {
+    const existing = state.projects.find((item) => item.id === id)
+    if (!existing || !changes || typeof changes !== 'object' || !Array.isArray(changes.teamMemberIds ?? existing.teamMemberIds ?? [])
+      || (changes.name !== undefined && typeof changes.name !== 'string')
+      || !canManageProject(currentUser, existing) || (changes.id !== undefined && changes.id !== id)
+      || ['createdBy', 'createdAt'].some((key) => key in changes)) return false
+    const candidate = {
+      ...existing,
+      ...changes,
+      name: (changes.name ?? existing.name)?.trim(),
+      teamMemberIds: [...new Set(changes.teamMemberIds ?? existing.teamMemberIds ?? [])],
+    }
+    if (!projectFormIsValid(candidate, id)) return false
+    const now = new Date().toISOString()
+    const normalizedChanges = {
+      ...changes,
+      name: candidate.name,
+      projectManagerId: candidate.projectManagerId || null,
+      ownerId: candidate.projectManagerId || null,
+      teamMemberIds: candidate.teamMemberIds,
+      budget: candidate.budget === '' || candidate.budget == null ? null : Number(candidate.budget),
+      updatedAt: now,
+    }
+    dispatch({ type: 'UPDATE_PROJECT', id, changes: normalizedChanges })
+    const statusChanged = candidate.status !== existing.status
+    const addedMembers = candidate.teamMemberIds.filter((userId) => !(existing.teamMemberIds || []).includes(userId))
+    const removedMembers = (existing.teamMemberIds || []).filter((userId) => !candidate.teamMemberIds.includes(userId))
+    if (candidate.projectManagerId && candidate.projectManagerId !== existing.projectManagerId) addedMembers.push(candidate.projectManagerId)
+    if (existing.projectManagerId && candidate.projectManagerId !== existing.projectManagerId) removedMembers.push(existing.projectManagerId)
+    dispatch({ type: 'ADD_ACTIVITY', entry: { id: makeUniqueId('a', state.activity), userId: currentUser.id, type: 'project', projectId: id, text: statusChanged
+      ? `${currentUser.name} changed "${candidate.name}" to ${candidate.status}.`
+      : `${currentUser.name} updated project "${candidate.name}".`, createdAt: now } })
+    for (const userId of new Set([...(statusChanged ? [candidate.projectManagerId, ...candidate.teamMemberIds] : []), ...addedMembers].filter(Boolean))) {
+      if (userId !== currentUser.id) dispatch({ type: 'ADD_NOTIFICATION', notification: { id: makeUniqueId('n', state.notifications), userId, type: 'project', title: statusChanged ? 'Project updated' : 'Added to a project', body: statusChanged ? `"${candidate.name}" is now ${candidate.status}.` : `${currentUser.name} added you to "${candidate.name}".`, link: '/projects', createdAt: now, read: false } })
+    }
+    for (const userId of new Set(removedMembers)) {
+      if (userId !== currentUser.id) dispatch({ type: 'ADD_NOTIFICATION', notification: { id: makeUniqueId('n', state.notifications), userId, type: 'project', title: 'Project team updated', body: `You were removed from "${candidate.name}".`, link: '/projects', createdAt: now, read: false } })
+    }
+    return true
+  }, [currentUser, projectFormIsValid, state.activity, state.notifications, state.projects])
+
+  const deleteProject = useCallback((id) => {
+    const project = state.projects.find((item) => item.id === id)
+    if (!project || !canManageProject(currentUser, project)) return false
+    dispatch({ type: 'DELETE_PROJECT', id })
+    dispatch({ type: 'ADD_ACTIVITY', entry: { id: makeUniqueId('a', state.activity), userId: currentUser.id, type: 'project', projectId: id, text: `${currentUser.name} deleted project "${project.name}".`, createdAt: new Date().toISOString() } })
+    return true
+  }, [currentUser, state.activity, state.projects])
+
   const updateEmployee = useCallback((id, changes) => {
     const employee = state.users.find((user) => user.id === id)
     if (!canManageUser(currentUser, employee, changes).allowed) return false
@@ -687,6 +864,10 @@ export function AppProvider({ children }) {
       createTicket,
       updateTicket,
       addTicketUpdate,
+      generateProjectId,
+      createProject,
+      updateProject,
+      deleteProject,
       updateEmployee,
       createEmployee,
       updateDepartment,
@@ -698,7 +879,7 @@ export function AppProvider({ children }) {
       ticketStatuses: ['Open', 'Triaged', 'In Progress', 'Waiting for Requester', 'Escalated', 'Resolved', 'Closed'],
       saveDemoState: persist,
     }
-  }, [state, currentUser, role, switchRole, markNotificationRead, markAllRead, resetDemo, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addActivity, addNotification, createTicket, updateTicket, addTicketUpdate, updateEmployee, createEmployee, updateDepartment, createDepartment, persist])
+  }, [state, currentUser, role, switchRole, markNotificationRead, markAllRead, resetDemo, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addActivity, addNotification, createTicket, updateTicket, addTicketUpdate, generateProjectId, createProject, updateProject, deleteProject, updateEmployee, createEmployee, updateDepartment, createDepartment, persist])
 
   useEffect(() => {
     persist(state)

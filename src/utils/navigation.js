@@ -31,7 +31,7 @@ export const NAV_GROUPS = [
         icon: Users,
         roles: ['superadmin', 'admin', 'manager', 'hr'],
       },
-      { key: 'projects', path: '/projects', label: 'Projects', icon: FolderKanban, roles: ['superadmin', 'admin', 'manager', 'hr', 'executive'] },
+      { key: 'projects', path: '/projects', label: 'Projects', icon: FolderKanban, roles: ['superadmin', 'admin', 'manager', 'hr', 'support', 'executive'] },
       { key: 'kanban', path: '/kanban', label: 'Kanban Board', icon: Columns3, roles: ALL },
     ],
   },
