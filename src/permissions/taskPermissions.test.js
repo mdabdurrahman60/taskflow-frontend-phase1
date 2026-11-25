@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MOCK_USERS } from '../data/mockUsers.js'
 import {
   canAssignSubtask,
   canAssignTask,
@@ -23,16 +22,32 @@ import {
   getEligibleTaskAssignees,
 } from './taskPermissions.js'
 
-const user = (id) => MOCK_USERS.find((person) => person.id === id)
-const superadmin = user('u-kamal')
-const admin = user('u-farhana')
-const manager = user('u-imran')
-const hr = user('u-maliha')
-const support = user('u-arif')
-const executive = user('u-ayesha')
-const activeManagerInHR = { ...manager, id: 'u-hr-manager', departmentId: 'd-hr' }
-const supportInHR = { ...support, id: 'u-hr-support', departmentId: 'd-hr' }
-const executiveInHR = { ...executive, id: 'u-hr-executive', departmentId: 'd-hr' }
+const testUserDetails = {
+  superadmin: ['superadmin', 'd-ops', 'Active'],
+  admin: ['admin', 'd-ops', 'Active', ['d-it', 'd-ops', 'd-hr']],
+  manager: ['manager', 'd-mkt', 'Active'],
+  hr: ['hr', 'd-hr', 'Active'],
+  support: ['support', 'd-it', 'Active'],
+  executive: ['executive', 'd-mkt', 'Active'],
+  inactive: ['support', 'd-ops', 'Inactive'],
+  engineeringSupport: ['support', 'd-eng', 'Active'],
+  operationsSupport: ['support', 'd-ops', 'Active'],
+  teammate: ['executive', 'd-mkt', 'Active'],
+  itSupport: ['support', 'd-it', 'Active'],
+}
+const user = (id) => {
+  const [role, departmentId, status, scopeDepartmentIds] = testUserDetails[id]
+  return { id, role, departmentId, status, scopeDepartmentIds, name: 'Test User', title: 'Test role' }
+}
+const superadmin = user('superadmin')
+const admin = user('admin')
+const manager = user('manager')
+const hr = user('hr')
+const support = user('support')
+const executive = user('executive')
+const activeManagerInHR = { ...manager, id: 'manager-in-hr-test', departmentId: 'd-hr' }
+const supportInHR = { ...support, id: 'support-in-hr-test', departmentId: 'd-hr' }
+const executiveInHR = { ...executive, id: 'executive-in-hr-test', departmentId: 'd-hr' }
 const marketingTask = { id: 'T-1', departmentId: 'd-mkt', projectId: 'p-launch', taskType: 'operational', assigneeId: executive.id, reporterId: manager.id }
 const hrTask = { id: 'T-2', departmentId: 'd-hr', projectId: 'p-people', taskType: 'hr', assigneeId: hr.id }
 const itTicket = { id: 'TKT-1', departmentId: 'd-it', requesterId: executive.id, assigneeId: support.id, status: 'Open' }
@@ -42,8 +57,8 @@ const assertDenied = (result) => assert.equal(result.allowed, false)
 
 test('Superadmin can assign active users across departments but not inactive users', () => {
   assertAllowed(canCreateTask(superadmin, { departmentId: 'd-fin', taskType: 'operational' }))
-  assertAllowed(canAssignTask(superadmin, user('u-shafiq'), { departmentId: 'd-eng', taskType: 'operational' }))
-  assertDenied(canAssignTask(superadmin, user('u-sohel'), { departmentId: 'd-ops', taskType: 'operational' }))
+  assertAllowed(canAssignTask(superadmin, user('engineeringSupport'), { departmentId: 'd-eng', taskType: 'operational' }))
+  assertDenied(canAssignTask(superadmin, user('inactive'), { departmentId: 'd-ops', taskType: 'operational' }))
 })
 
 test('Admin assignments respect scope and cannot target Superadmin or peer Admins', () => {
@@ -58,7 +73,7 @@ test('Manager task assignment is self or Support/Executive in the same departmen
   assertAllowed(canAssignTask(manager, manager, { departmentId: 'd-mkt', taskType: 'operational' }))
   assertAllowed(canAssignTask(manager, executive, { departmentId: 'd-mkt', taskType: 'operational' }))
   assertDenied(canAssignTask(manager, hr, { departmentId: 'd-mkt', taskType: 'operational' }))
-  assertDenied(canAssignTask(manager, user('u-shafiq'), { departmentId: 'd-eng', taskType: 'operational' }))
+  assertDenied(canAssignTask(manager, user('engineeringSupport'), { departmentId: 'd-eng', taskType: 'operational' }))
   assertDenied(canAssignTask(manager, executive, { departmentId: 'd-mkt', taskType: 'hr' }))
 })
 
@@ -77,7 +92,7 @@ test('Support cannot assign arbitrary top-level work and can follow up only own 
   assertAllowed(canCreateTask(support, { departmentId: 'd-it', taskType: 'support', isTicketFollowUp: true, sourceTicketAssignedTo: support.id }))
   assertAllowed(canAssignTask(support, support, { departmentId: 'd-it', taskType: 'support', isTicketFollowUp: true, sourceTicketAssignedTo: support.id }))
   assertDenied(canCreateTask(support, { departmentId: 'd-it', taskType: 'support', isTicketFollowUp: true, sourceTicketAssignedTo: executive.id }))
-  const operationsSupport = user('u-nabila')
+  const operationsSupport = user('operationsSupport')
   assertDenied(canViewTask(operationsSupport, { id: 'T-IT', departmentId: 'd-it', assigneeId: null, reporterId: null }))
   assertAllowed(canViewTask(operationsSupport, { id: 'T-OPS', departmentId: 'd-ops', assigneeId: null, reporterId: null }))
   assertDenied(canAssignSubtask(support, executive, { id: 'T-IT', departmentId: 'd-it', assigneeId: support.id }))
@@ -88,9 +103,9 @@ test('Executive can self-assign personal work and collaborate only through eligi
   assertDenied(canCreateTask(executive, { departmentId: 'd-mkt', taskType: 'operational' }))
   assertDenied(canAssignTask(executive, manager, { departmentId: 'd-mkt', taskType: 'personal' }))
   assertAllowed(canCreateSubtask(executive, marketingTask))
-  assertAllowed(canAssignSubtask(executive, user('u-sarah'), marketingTask))
+  assertAllowed(canAssignSubtask(executive, user('teammate'), marketingTask))
   assertDenied(canAssignSubtask(executive, manager, marketingTask))
-  assertDenied(canAssignSubtask(executive, user('u-shafiq'), marketingTask))
+  assertDenied(canAssignSubtask(executive, user('engineeringSupport'), marketingTask))
 })
 
 test('Task view, edit, status, delete, and reassignment honor role scope', () => {
@@ -105,7 +120,8 @@ test('Task view, edit, status, delete, and reassignment honor role scope', () =>
 })
 
 test('Task and subtask assignee lists contain only eligible active users', () => {
-  const managerAssignees = getEligibleTaskAssignees({ user: manager, users: MOCK_USERS, taskContext: { departmentId: 'd-mkt', taskType: 'operational' } })
+  const users = Object.keys(testUserDetails).map(user)
+  const managerAssignees = getEligibleTaskAssignees({ user: manager, users, taskContext: { departmentId: 'd-mkt', taskType: 'operational' } })
   assert.ok(managerAssignees.some((person) => person.id === manager.id))
   assert.ok(managerAssignees.every((person) => person.departmentId === 'd-mkt' && person.status === 'Active'))
   assert.ok(managerAssignees.every((person) => !['admin', 'superadmin', 'hr'].includes(person.role)))
@@ -120,8 +136,8 @@ test('Department management is restricted to Superadmin and Admin scope', () => 
 })
 
 test('Employee management prevents Admin role changes and protects Superadmin', () => {
-  assertAllowed(canManageUser(admin, user('u-arif'), { title: 'Updated title' }))
-  assertDenied(canManageUser(admin, user('u-arif'), { role: 'manager' }))
+  assertAllowed(canManageUser(admin, support, { title: 'Updated title' }))
+  assertDenied(canManageUser(admin, support, { role: 'manager' }))
   assertDenied(canManageUser(admin, superadmin, { title: 'Unauthorized' }))
   assertAllowed(canManageUser(admin, null, { role: 'executive', departmentId: 'd-it' }))
   assertDenied(canManageUser(admin, null, { role: 'hr', departmentId: 'd-hr' }))
@@ -130,7 +146,7 @@ test('Employee management prevents Admin role changes and protects Superadmin', 
 test('Ticket view, update, assignment, escalation, and department moves are scoped', () => {
   assertAllowed(canViewTicket(support, itTicket))
   assertAllowed(canUpdateTicket(support, itTicket))
-  assertAllowed(canAssignTicket(support, itTicket, user('u-tasnim')))
+  assertAllowed(canAssignTicket(support, itTicket, user('itSupport')))
   assertAllowed(canEscalateTicket(support, itTicket))
   assertDenied(canUpdateTicket(manager, { ...itTicket, departmentId: 'd-it', requesterId: null, assigneeId: null }))
   assertAllowed(canChangeTicketDepartment(admin, { ...itTicket, departmentId: 'd-it' }, 'd-hr'))

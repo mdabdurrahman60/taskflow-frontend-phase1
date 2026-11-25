@@ -10,13 +10,13 @@ import { useToast } from '../components/ui/useToast'
 import { timeAgo } from '../utils/dates'
 import { canAssignTicket, canCreateTask, canCreateTicket, canEscalateTicket, canUpdateTicket, canViewTicket } from '../permissions/taskPermissions'
 
-const ticketDefault = (currentUserId) => ({
+const ticketDefault = (currentUser) => ({
   title: '',
   description: '',
-  requesterId: currentUserId,
-  assigneeId: currentUserId,
+  requesterId: currentUser.id,
+  assigneeId: currentUser.id,
   priority: 'Medium',
-  departmentId: 'd-it',
+  departmentId: currentUser.departmentId || '',
   status: 'Open',
 })
 
@@ -29,7 +29,7 @@ export default function HelpdeskPage() {
   const [assigneeFilter, setAssigneeFilter] = useState('All')
   const [ticketModalOpen, setTicketModalOpen] = useState(false)
   const [selectedTicketId, setSelectedTicketId] = useState(tickets[0]?.id ?? null)
-  const [ticketForm, setTicketForm] = useState(ticketDefault(currentUser.id))
+  const [ticketForm, setTicketForm] = useState(ticketDefault(currentUser))
   const [replyText, setReplyText] = useState('')
   const [replyType, setReplyType] = useState('public')
   const eligibleAssignees = users.filter((user) => user.id === currentUser.id || canAssignTicket(currentUser, ticketForm, user).allowed)
@@ -55,6 +55,10 @@ export default function HelpdeskPage() {
     event.preventDefault()
     if (!ticketForm.title.trim()) {
       toast({ title: 'Ticket needs a title', description: 'Add a brief summary before creating the ticket.', type: 'error' })
+      return
+    }
+    if (!ticketForm.departmentId || !departments.some((department) => department.id === ticketForm.departmentId)) {
+      toast({ title: 'Department required', description: 'Choose a department returned by the backend.', type: 'error' })
       return
     }
     const assignee = users.find((user) => user.id === ticketForm.assigneeId)
@@ -90,7 +94,7 @@ export default function HelpdeskPage() {
     onTicketChange(createdId, `${currentUser.name} created ${newTicket.title}.`, 'task')
     if (ticketForm.assigneeId !== currentUser.id) addNotification({ id: `n-${Date.now()}`, userId: ticketForm.assigneeId, type: 'ticket', title: 'New ticket assigned', body: `${currentUser.name} assigned you "${newTicket.title}".`, link: '/helpdesk', createdAt: new Date().toISOString(), read: false })
     setTicketModalOpen(false)
-    setTicketForm(ticketDefault(currentUser.id))
+    setTicketForm(ticketDefault(currentUser))
     toast({ title: 'Ticket created', description: 'The new helpdesk request is now in the queue.', type: 'success' })
   }
 
@@ -231,7 +235,7 @@ export default function HelpdeskPage() {
           </select>
           <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]">
             <option value="All">All assignee</option>
-            {users.filter((user) => visibleTickets.some((ticket) => ticket.assigneeId === user.id)).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+            {users.filter((user) => visibleTickets.some((ticket) => ticket.assigneeId === user.id)).map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)}
           </select>
         </CardBody>
       </Card>
@@ -259,7 +263,7 @@ export default function HelpdeskPage() {
         <Card>
           {selectedTicket ? (
             <>
-              <CardHeader title={selectedTicket.title} subtitle={`${selectedTicket.id} • ${selectedTicket.status}`} action={canUpdateTicket(currentUser, selectedTicket).allowed && <div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Assign ticket" value={selectedTicket.assigneeId || ''} onChange={(e) => handleTicketReassign(selectedTicket, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">{users.filter((user) => user.id === selectedTicket.assigneeId || canAssignTicket(currentUser, selectedTicket, user).allowed).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select><select aria-label="Ticket priority" value={selectedTicket.priority} onChange={(e) => updateTicket(selectedTicket.id, { priority: e.target.value })} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]"><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Critical">Critical</option></select><select aria-label="Ticket status" value={selectedTicket.status} onChange={(e) => handleStatusUpdate(selectedTicket.id, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">{['Open', 'Triaged', 'In Progress', 'Waiting for Requester', 'Escalated', 'Resolved', 'Closed'].map((status) => <option key={status} value={status}>{status}</option>)}</select></div>} />
+              <CardHeader title={selectedTicket.title} subtitle={`${selectedTicket.id} • ${selectedTicket.status}`} action={canUpdateTicket(currentUser, selectedTicket).allowed && <div className="flex flex-wrap items-center justify-end gap-2"><select aria-label="Assign ticket" value={selectedTicket.assigneeId || ''} onChange={(e) => handleTicketReassign(selectedTicket, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">{users.filter((user) => user.id === selectedTicket.assigneeId || canAssignTicket(currentUser, selectedTicket, user).allowed).map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)}</select><select aria-label="Ticket priority" value={selectedTicket.priority} onChange={(e) => updateTicket(selectedTicket.id, { priority: e.target.value })} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]"><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Critical">Critical</option></select><select aria-label="Ticket status" value={selectedTicket.status} onChange={(e) => handleStatusUpdate(selectedTicket.id, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">{['Open', 'Triaged', 'In Progress', 'Waiting for Requester', 'Escalated', 'Resolved', 'Closed'].map((status) => <option key={status} value={status}>{status}</option>)}</select></div>} />
               <CardBody className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-md border border-line-soft bg-surface px-3 py-2.5">
@@ -333,18 +337,21 @@ export default function HelpdeskPage() {
                 <div>
                   <label htmlFor="ticket-requester" className="mb-1 block text-[12px] font-medium text-ink">Requester</label>
                   {['superadmin', 'admin'].includes(currentUser.role) ? <select id="ticket-requester" value={ticketForm.requesterId} onChange={(e) => setTicketForm({ ...ticketForm, requesterId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
-                    {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    {users.length === 0 && <option value="" disabled>No employees available</option>}
+                    {users.map((u) => <option key={u.id} value={u.id}>{u.employeeId ? `${u.employeeId} · ` : ''}{u.name}</option>)}
                   </select> : <p className="h-10 pt-2 text-[13px] text-ink">{currentUser.name}</p>}
                 </div>
                 <div>
                   <label htmlFor="ticket-assignee" className="mb-1 block text-[12px] font-medium text-ink">Assignee</label>
                   <select id="ticket-assignee" value={ticketForm.assigneeId} onChange={(e) => setTicketForm({ ...ticketForm, assigneeId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
-                    {eligibleAssignees.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    {eligibleAssignees.length === 0 && <option value="" disabled>No employees available</option>}
+                    {eligibleAssignees.map((u) => <option key={u.id} value={u.id}>{u.employeeId ? `${u.employeeId} · ` : ''}{u.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label htmlFor="ticket-department" className="mb-1 block text-[12px] font-medium text-ink">Department</label>
                   <select id="ticket-department" value={ticketForm.departmentId} onChange={(e) => setTicketForm({ ...ticketForm, departmentId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
+                    {departments.length === 0 && <option value="" disabled>No departments available</option>}
                     {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
                   </select>
                 </div>

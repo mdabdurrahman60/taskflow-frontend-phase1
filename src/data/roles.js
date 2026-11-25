@@ -38,7 +38,7 @@ export const ROLES = {
       'Create projects, tasks and subtasks for the team',
       'Track workload, deadlines and overdue work',
       'Team Kanban board and task history',
-      'Create Executives and Support Staff in the department',
+      'Create projects, tasks and subtasks for the team',
     ],
   },
   hr: {

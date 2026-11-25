@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useReducer } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { AppContext } from './appContext'
-import { MOCK_USERS, DEMO_USER_BY_ROLE } from '../data/mockUsers'
-import { MOCK_DEPARTMENTS } from '../data/mockDepartments'
+import { clearTaskIdentities, clearTicketIdentities, sanitizeLegacyAppState } from './legacyDataCleanup.js'
+import { useAuth } from '../auth/AuthContext.jsx'
+import { apiClient } from '../api/apiClient.js'
 import { ROLES } from '../data/roles'
 import { can as canRole } from '../utils/permissions'
 import {
@@ -14,11 +15,9 @@ import {
   canCreateTicket,
   canCreateSubtask,
   canCreateTask,
-  canCreateDepartment,
   canDeleteTask as checkCanDeleteTask,
   canEscalateTicket,
   canEditTask,
-  canManageUser,
   canReassignTask,
   canUpdateTicket,
   canViewTask,
@@ -33,7 +32,7 @@ import {
 import { daysFromNow, hoursAgo, minutesAgo, toISODate } from '../utils/dates'
 
 const STORAGE_KEY = 'taskflow.demo.state.v1'
-const DEFAULT_USER_ID = DEMO_USER_BY_ROLE.manager
+const DATA_CLEANUP_KEY = 'taskflow.demo.data-cleanup.v1'
 
 function makeId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`
@@ -46,13 +45,6 @@ function makeUniqueId(prefix, records) {
   return id
 }
 
-function validManagerAssignment(managerId, departmentId, users) {
-  if (!managerId) return true
-  const manager = users.find((user) => user.id === managerId)
-  if (!manager || manager.status !== 'Active' || !['superadmin', 'admin', 'manager', 'hr'].includes(manager.role)) return false
-  return manager.departmentId === departmentId || ['superadmin', 'admin'].includes(manager.role)
-}
-
 function validProjectDate(value) {
   if (!value) return true
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -61,34 +53,20 @@ function validProjectDate(value) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
 }
 
-function createInitialNotifications() {
-  return [
-    { id: 'n-01', userId: 'u-imran', type: 'task', title: 'Campaign briefing ready', body: 'The product launch campaign is ready for review.', link: '/my-tasks', createdAt: minutesAgo(20), read: false },
-    { id: 'n-02', userId: 'u-imran', type: 'comment', title: 'New comment added', body: 'Ayesha commented on the product launch plan.', link: '/my-tasks', createdAt: minutesAgo(42), read: false },
-    { id: 'n-03', userId: 'u-imran', type: 'deadline', title: 'Deadline approaching', body: 'The launch campaign due date is in 3 days.', link: '/my-tasks', createdAt: hoursAgo(2), read: false },
-    { id: 'n-04', userId: 'u-ayesha', type: 'task', title: 'Task assigned', body: 'You were assigned the product launch campaign plan.', link: '/my-tasks', createdAt: minutesAgo(15), read: false },
-    { id: 'n-05', userId: 'u-ayesha', type: 'comment', title: 'Subtask update', body: 'Rahim updated the product descriptions subtask.', link: '/my-tasks', createdAt: hoursAgo(1), read: false },
-    { id: 'n-06', userId: 'u-arif', type: 'ticket', title: 'Support queue update', body: 'A new ticket was routed to the IT Support team.', link: '/helpdesk', createdAt: hoursAgo(7), read: true },
-    { id: 'n-07', userId: 'u-mahmudul', type: 'deadline', title: 'Engineering review due soon', body: 'Two engineering tasks are close to their due dates.', link: '/team-tasks', createdAt: hoursAgo(3), read: false },
-    { id: 'n-08', userId: 'u-kamal', type: 'system', title: 'Weekly summary ready', body: 'The organization summary is updated for this week.', link: '/reports', createdAt: hoursAgo(10), read: true },
-  ]
-}
-
-function createInitialActivity() {
-  return [
-    { id: 'a-01', userId: 'u-imran', type: 'task', text: 'Imran created the launch campaign plan.', createdAt: hoursAgo(12) },
-    { id: 'a-02', userId: 'u-sarah', type: 'subtask', text: 'Sarah completed Prepare product images.', createdAt: hoursAgo(5) },
-    { id: 'a-03', userId: 'u-ayesha', type: 'task', text: 'Ayesha marked the launch campaign as In Progress.', createdAt: hoursAgo(2) },
-    { id: 'a-04', userId: 'u-arif', type: 'ticket', text: 'Arif triaged a new IT support request.', createdAt: hoursAgo(9) },
-  ]
-}
-
-function readStoredUserId() {
+function cleanLegacyLocalData() {
   try {
-    const stored = localStorage.getItem('taskflow.demo.userId')
-    return Object.values(DEMO_USER_BY_ROLE).includes(stored) ? stored : null
+    if (localStorage.getItem(DATA_CLEANUP_KEY) === '1') return
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizeLegacyAppState(parsed)))
+      }
+    }
+    localStorage.removeItem('taskflow.demo.userId')
+    localStorage.setItem(DATA_CLEANUP_KEY, '1')
   } catch {
-    return null
+    // Keep the app usable when browser storage is unavailable or contains invalid legacy data.
   }
 }
 
@@ -97,16 +75,19 @@ function readStoredState() {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)
-    const requiredCollections = ['users', 'departments', 'tasks', 'tickets', 'notifications', 'activity', 'projects']
+    const requiredCollections = ['tasks', 'tickets', 'projects']
     if (!parsed || requiredCollections.some((key) => !Array.isArray(parsed[key]))) return null
-    if (!parsed.users.length || parsed.users.some((user) => !user?.id || !user?.role)) return null
     if (parsed.tasks.some((task) => !task?.id || !task?.title)) return null
     if (parsed.tickets.some((ticket) => !ticket?.id || !ticket?.title)) return null
 
     return {
       ...parsed,
-      currentUserId: parsed.users.some((user) => user.id === parsed.currentUserId) ? parsed.currentUserId : readStoredUserId() || DEFAULT_USER_ID,
-      projects: normalizeStoredProjects(parsed.projects, parsed.users, parsed.tasks),
+      currentUserId: null,
+      users: [],
+      departments: [],
+      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
+      activity: Array.isArray(parsed.activity) ? parsed.activity : [],
+      projects: normalizeStoredProjects(parsed.projects, [], parsed.tasks),
       tasks: parsed.tasks.map((task) => ({ ...task, comments: Array.isArray(task.comments) ? task.comments : [], subtasks: Array.isArray(task.subtasks) ? task.subtasks : [] })),
       tickets: parsed.tickets.map((ticket) => ({ ...ticket, updates: Array.isArray(ticket.updates) ? ticket.updates : [] })),
     }
@@ -123,21 +104,18 @@ function buildInitialTasks() {
       description: 'Coordinate campaign assets, copy, assets and launch scheduling for the next product release.',
       status: 'In Progress',
       priority: 'High',
-      assigneeId: 'u-ayesha',
-      reporterId: 'u-imran',
-      departmentId: 'd-mkt',
       projectId: 'p-launch',
       dueDate: daysFromNow(3),
       createdAt: hoursAgo(22),
       comments: [
-        { id: 'c-1', userId: 'u-imran', text: 'Let us keep the launch checklist aligned with the sales push.', createdAt: hoursAgo(7) },
-        { id: 'c-2', userId: 'u-ayesha', text: 'I am coordinating the copy and brief with the design crew.', createdAt: hoursAgo(2) },
+        { id: 'c-1', text: 'Let us keep the launch checklist aligned with the sales push.', createdAt: hoursAgo(7) },
+        { id: 'c-2', text: 'I am coordinating the copy and brief with the design crew.', createdAt: hoursAgo(2) },
       ],
       subtasks: [
-        { id: 'S-101', title: 'Prepare product images', assigneeId: 'u-sarah', creatorId: 'u-imran', status: 'Completed', priority: 'High', dueDate: daysFromNow(-1), description: 'Prepare final visuals for campaign landing and social assets.', createdAt: hoursAgo(18), comments: [{ id: 'c-11', userId: 'u-imran', text: 'The selected visuals are on track.', createdAt: hoursAgo(5) }] },
-        { id: 'S-102', title: 'Write product descriptions', assigneeId: 'u-rahim', creatorId: 'u-imran', status: 'In Progress', priority: 'High', dueDate: daysFromNow(2), description: 'Draft a concise product overview and feature highlights.', createdAt: hoursAgo(16), comments: [] },
-        { id: 'S-103', title: 'Prepare social media captions', assigneeId: 'u-tanvir', creatorId: 'u-imran', status: 'To Do', priority: 'Medium', dueDate: daysFromNow(4), description: 'Create platform-specific captions for launch week.', createdAt: hoursAgo(10), comments: [] },
-        { id: 'S-104', title: 'Review campaign materials', assigneeId: 'u-nusrat', creatorId: 'u-imran', status: 'In Review', priority: 'Medium', dueDate: daysFromNow(1), description: 'Approve all campaign copy and art direction.', createdAt: hoursAgo(9), comments: [] },
+        { id: 'S-101', title: 'Prepare product images', status: 'Completed', priority: 'High', dueDate: daysFromNow(-1), description: 'Prepare final visuals for campaign landing and social assets.', createdAt: hoursAgo(18), comments: [{ id: 'c-11', text: 'The selected visuals are on track.', createdAt: hoursAgo(5) }] },
+        { id: 'S-102', title: 'Write product descriptions', status: 'In Progress', priority: 'High', dueDate: daysFromNow(2), description: 'Draft a concise product overview and feature highlights.', createdAt: hoursAgo(16), comments: [] },
+        { id: 'S-103', title: 'Prepare social media captions', status: 'To Do', priority: 'Medium', dueDate: daysFromNow(4), description: 'Create platform-specific captions for launch week.', createdAt: hoursAgo(10), comments: [] },
+        { id: 'S-104', title: 'Review campaign materials', status: 'In Review', priority: 'Medium', dueDate: daysFromNow(1), description: 'Approve all campaign copy and art direction.', createdAt: hoursAgo(9), comments: [] },
       ],
     },
     {
@@ -146,9 +124,6 @@ function buildInitialTasks() {
       description: 'Tighten the procurement checklist and share onboarding docs with the finance and ops teams.',
       status: 'Backlog',
       priority: 'Medium',
-      assigneeId: 'u-imran',
-      reporterId: 'u-farhana',
-      departmentId: 'd-mkt',
       projectId: 'p-partners',
       dueDate: daysFromNow(9),
       createdAt: hoursAgo(26),
@@ -161,16 +136,13 @@ function buildInitialTasks() {
       description: 'Review the production vulnerability backlog before the final release cut.',
       status: 'In Review',
       priority: 'Critical',
-      assigneeId: 'u-shafiq',
-      reporterId: 'u-mahmudul',
-      departmentId: 'd-eng',
       projectId: 'p-platform',
       dueDate: daysFromNow(-2),
       createdAt: hoursAgo(30),
-      comments: [{ id: 'c-3', userId: 'u-lamia', text: 'QA sign-off is in progress for this patch.', createdAt: hoursAgo(5) }],
+      comments: [{ id: 'c-3', text: 'QA sign-off is in progress for this patch.', createdAt: hoursAgo(5) }],
       subtasks: [
-        { id: 'S-201', title: 'Validate patch notes', assigneeId: 'u-lamia', creatorId: 'u-shafiq', status: 'Completed', priority: 'Critical', dueDate: daysFromNow(-3), description: 'Verify the patch summary matches the release notes.', createdAt: hoursAgo(40), comments: [] },
-        { id: 'S-202', title: 'Confirm deployment checklist', assigneeId: 'u-rafi', creatorId: 'u-shafiq', status: 'Blocked', priority: 'High', dueDate: daysFromNow(1), description: 'Confirm rollback and staging readiness before deployment.', createdAt: hoursAgo(36), comments: [] },
+        { id: 'S-201', title: 'Validate patch notes', status: 'Completed', priority: 'Critical', dueDate: daysFromNow(-3), description: 'Verify the patch summary matches the release notes.', createdAt: hoursAgo(40), comments: [] },
+        { id: 'S-202', title: 'Confirm deployment checklist', status: 'Blocked', priority: 'High', dueDate: daysFromNow(1), description: 'Confirm rollback and staging readiness before deployment.', createdAt: hoursAgo(36), comments: [] },
       ],
     },
     {
@@ -179,9 +151,6 @@ function buildInitialTasks() {
       description: 'Review forecasts and reconcile variance assumptions for the end-of-quarter report.',
       status: 'Completed',
       priority: 'Medium',
-      assigneeId: 'u-sabrina',
-      reporterId: 'u-kamal',
-      departmentId: 'd-fin',
       projectId: 'p-finance',
       dueDate: daysFromNow(-4),
       createdAt: hoursAgo(80),
@@ -194,9 +163,6 @@ function buildInitialTasks() {
       description: 'Complete all documentation and setup for the next cohort of new hires.',
       status: 'To Do',
       priority: 'High',
-      assigneeId: 'u-maliha',
-      reporterId: 'u-rubel',
-      departmentId: 'd-hr',
       projectId: 'p-people',
       dueDate: daysFromNow(6),
       createdAt: hoursAgo(54),
@@ -209,13 +175,10 @@ function buildInitialTasks() {
       description: 'Review the current device stock and finalize the replacement timeline for the support queue.',
       status: 'Blocked',
       priority: 'High',
-      assigneeId: 'u-arif',
-      reporterId: 'u-zubair',
-      departmentId: 'd-it',
       projectId: 'p-it',
       dueDate: daysFromNow(1),
       createdAt: hoursAgo(18),
-      comments: [{ id: 'c-4', userId: 'u-zubair', text: 'We need three additional approvals before we can order equipment.', createdAt: hoursAgo(2) }],
+      comments: [{ id: 'c-4', text: 'We need three additional approvals before we can order equipment.', createdAt: hoursAgo(2) }],
       subtasks: [],
     },
   ]
@@ -227,15 +190,12 @@ function buildInitialTickets() {
       id: 'TKT-1041',
       title: 'VPN access is not working on my laptop',
       description: 'The VPN client keeps disconnecting after login. I need access for the weekend installation work.',
-      requesterId: 'u-shafiq',
-      assigneeId: 'u-arif',
-      departmentId: 'd-it',
       status: 'In Progress',
       priority: 'High',
       createdAt: hoursAgo(8),
       updates: [
-        { id: 'u-1', authorId: 'u-arif', type: 'public', message: 'I am reviewing the VPN logs and checking the affected access profile.', createdAt: hoursAgo(5) },
-        { id: 'u-2', authorId: 'u-arif', type: 'internal', message: 'This is likely tied to certificate rotation for the engineering VPN profile.', createdAt: hoursAgo(4) },
+        { id: 'u-1', type: 'public', message: 'I am reviewing the VPN logs and checking the affected access profile.', createdAt: hoursAgo(5) },
+        { id: 'u-2', type: 'internal', message: 'This is likely tied to certificate rotation for the engineering VPN profile.', createdAt: hoursAgo(4) },
       ],
       relatedTaskId: null,
     },
@@ -243,39 +203,30 @@ function buildInitialTickets() {
       id: 'TKT-1042',
       title: 'Request for conference room booking changes',
       description: 'The room booking system needs updated equipment and access timing for the weekly ops sync.',
-      requesterId: 'u-nabila',
-      assigneeId: 'u-farhana',
-      departmentId: 'd-ops',
       status: 'Triaged',
       priority: 'Medium',
       createdAt: hoursAgo(26),
-      updates: [{ id: 'u-3', authorId: 'u-farhana', type: 'public', message: 'Thanks, I have passed this to the office admin team for review.', createdAt: hoursAgo(20) }],
+      updates: [{ id: 'u-3', type: 'public', message: 'Thanks, I have passed this to the office admin team for review.', createdAt: hoursAgo(20) }],
       relatedTaskId: null,
     },
     {
       id: 'TKT-1043',
       title: 'Access request for new contractor',
       description: 'Please create access to the project board, email and shared drive for the contractor who starts Tuesday.',
-      requesterId: 'u-maliha',
-      assigneeId: 'u-tasnim',
-      departmentId: 'd-hr',
       status: 'Waiting for Requester',
       priority: 'Medium',
       createdAt: hoursAgo(4),
-      updates: [{ id: 'u-4', authorId: 'u-tasnim', type: 'public', message: 'I need the contractor identity and the access dates before I can finalize the setup.', createdAt: minutesAgo(15) }],
+      updates: [{ id: 'u-4', type: 'public', message: 'I need the contractor identity and the access dates before I can finalize the setup.', createdAt: minutesAgo(15) }],
       relatedTaskId: null,
     },
     {
       id: 'TKT-1044',
       title: 'Campaign asset export is failing',
       description: 'The design export process is failing when we generate the final social files from the campaign library.',
-      requesterId: 'u-rahim',
-      assigneeId: 'u-arif',
-      departmentId: 'd-mkt',
       status: 'Escalated',
       priority: 'High',
       createdAt: hoursAgo(9),
-      updates: [{ id: 'u-5', authorId: 'u-arif', type: 'internal', message: 'Escalating to marketing engineering because the export timing issue is happening on the new asset pipeline.', createdAt: hoursAgo(3) }],
+      updates: [{ id: 'u-5', type: 'internal', message: 'Escalating to engineering because the export timing issue is happening on the new asset pipeline.', createdAt: hoursAgo(3) }],
       relatedTaskId: null,
     },
   ]
@@ -283,12 +234,12 @@ function buildInitialTickets() {
 
 function buildInitialProjects() {
   return [
-    { id: 'p-launch', name: 'Product Launch', description: 'Coordinate campaign assets and launch scheduling.', projectManagerId: 'u-imran', ownerId: 'u-imran', teamMemberIds: ['u-ayesha', 'u-sarah', 'u-rahim', 'u-tanvir', 'u-nusrat'], departmentId: 'd-mkt', priority: 'High', status: 'Active', startDate: daysFromNow(-14), deadline: daysFromNow(30), color: '#DC2626' },
-    { id: 'p-platform', name: 'Platform Release', description: 'Prepare and deliver the next platform release.', projectManagerId: 'u-mahmudul', ownerId: 'u-mahmudul', teamMemberIds: ['u-shafiq', 'u-lamia', 'u-rafi'], departmentId: 'd-eng', priority: 'Critical', status: 'Active', startDate: daysFromNow(-10), deadline: daysFromNow(21), color: '#2563EB' },
-    { id: 'p-people', name: 'People Ops', description: 'Coordinate people operations initiatives.', projectManagerId: 'u-maliha', ownerId: 'u-maliha', teamMemberIds: ['u-rubel'], departmentId: 'd-hr', priority: 'Medium', status: 'Planning', startDate: daysFromNow(1), deadline: daysFromNow(45), color: '#7C3AED' },
-    { id: 'p-it', name: 'IT Modernization', description: 'Improve internal systems and IT operations.', projectManagerId: 'u-zubair', ownerId: 'u-zubair', teamMemberIds: ['u-arif', 'u-tasnim'], departmentId: 'd-it', priority: 'High', status: 'Active', startDate: daysFromNow(-20), deadline: daysFromNow(60), color: '#0891B2' },
-    { id: 'p-finance', name: 'Finance Review', description: 'Review financial operations and reporting.', projectManagerId: 'u-sabrina', ownerId: 'u-sabrina', teamMemberIds: ['u-tahmid', 'u-joya'], departmentId: 'd-fin', priority: 'Low', status: 'Completed', startDate: daysFromNow(-60), deadline: daysFromNow(-2), color: '#16A34A' },
-    { id: 'p-partners', name: 'Vendor Onboarding', description: 'Streamline partner and vendor onboarding.', projectManagerId: 'u-imran', ownerId: 'u-imran', teamMemberIds: ['u-ayesha', 'u-rahim'], departmentId: 'd-mkt', priority: 'Medium', status: 'Active', startDate: daysFromNow(-5), deadline: daysFromNow(35), color: '#D97706' },
+    { id: 'p-launch', name: 'Product Launch', description: 'Coordinate campaign assets and launch scheduling.', priority: 'High', status: 'Active', startDate: daysFromNow(-14), deadline: daysFromNow(30), color: '#DC2626' },
+    { id: 'p-platform', name: 'Platform Release', description: 'Prepare and deliver the next platform release.', priority: 'Critical', status: 'Active', startDate: daysFromNow(-10), deadline: daysFromNow(21), color: '#2563EB' },
+    { id: 'p-people', name: 'People Ops', description: 'Coordinate people operations initiatives.', priority: 'Medium', status: 'Planning', startDate: daysFromNow(1), deadline: daysFromNow(45), color: '#7C3AED' },
+    { id: 'p-it', name: 'IT Modernization', description: 'Improve internal systems and IT operations.', priority: 'High', status: 'Active', startDate: daysFromNow(-20), deadline: daysFromNow(60), color: '#0891B2' },
+    { id: 'p-finance', name: 'Finance Review', description: 'Review financial operations and reporting.', priority: 'Low', status: 'Completed', startDate: daysFromNow(-60), deadline: daysFromNow(-2), color: '#16A34A' },
+    { id: 'p-partners', name: 'Vendor Onboarding', description: 'Streamline partner and vendor onboarding.', priority: 'Medium', status: 'Active', startDate: daysFromNow(-5), deadline: daysFromNow(35), color: '#D97706' },
   ]
 }
 
@@ -317,31 +268,33 @@ function normalizeStoredProjects(projects, users, tasks) {
   })
 }
 
-function createInitialState(currentUserId) {
-  const userId = currentUserId ?? readStoredUserId() ?? DEFAULT_USER_ID
+function createInitialState() {
+  const tasks = clearTaskIdentities(buildInitialTasks())
+  const tickets = clearTicketIdentities(buildInitialTickets())
   const base = {
-    currentUserId: userId,
-    users: MOCK_USERS.map((u) => ({ ...u })),
-    departments: MOCK_DEPARTMENTS.map((d) => ({ ...d })),
-    tasks: buildInitialTasks(),
-    tickets: buildInitialTickets(),
-    notifications: createInitialNotifications(),
-    activity: createInitialActivity(),
-    projects: buildInitialProjects(),
+    currentUserId: null,
+    users: [],
+    departments: [],
+    tasks,
+    tickets,
+    notifications: [],
+    activity: [],
+    projects: buildInitialProjects().map((project) => ({
+      ...project,
+      projectManagerId: null,
+      ownerId: null,
+      teamMemberIds: [],
+      departmentId: null,
+    })),
   }
 
   return base
 }
 
 function readInitialState() {
+  cleanLegacyLocalData()
   const stored = readStoredState()
-  if (stored) {
-    return {
-      ...stored,
-      currentUserId: stored.currentUserId || readStoredUserId() || DEFAULT_USER_ID,
-    }
-  }
-  return createInitialState()
+  return stored || createInitialState()
 }
 
 function sortByPriority(priority) {
@@ -350,19 +303,10 @@ function sortByPriority(priority) {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'SWITCH_ROLE': {
-      const userId = DEMO_USER_BY_ROLE[action.role]
-      if (!userId) return state
-      try {
-        localStorage.setItem('taskflow.demo.userId', userId)
-      } catch {
-        // ignore storage issues in demo mode
-      }
-
-      return { ...state, currentUserId: userId }
-    }
     case 'SET_STATE':
       return action.state
+    case 'SET_DIRECTORY':
+      return { ...state, users: action.users, departments: action.departments }
     case 'UPDATE_TASK': {
       return {
         ...state,
@@ -436,21 +380,6 @@ function reducer(state, action) {
         tickets: state.tickets.map((ticket) => (ticket.id === action.ticketId ? { ...ticket, updates: [...(ticket.updates || []), action.update] } : ticket)),
       }
     }
-    case 'ADD_USER':
-      return {
-        ...state,
-        users: [...state.users, action.user],
-      }
-    case 'UPDATE_USER': {
-      return {
-        ...state,
-        users: state.users.map((user) => (user.id === action.id ? { ...user, ...action.changes } : user)),
-      }
-    }
-    case 'ADD_DEPARTMENT':
-      return { ...state, departments: [...state.departments, action.department] }
-    case 'UPDATE_DEPARTMENT':
-      return { ...state, departments: state.departments.map((department) => (department.id === action.id ? { ...department, ...action.changes } : department)) }
     case 'ADD_PROJECT':
       return { ...state, projects: [action.project, ...state.projects] }
     case 'UPDATE_PROJECT':
@@ -482,12 +411,7 @@ function reducer(state, action) {
         notifications: state.notifications.map((n) => (n.userId === action.userId ? { ...n, read: true } : n)),
       }
     case 'RESET_DEMO':
-      try {
-        localStorage.setItem('taskflow.demo.userId', DEFAULT_USER_ID)
-      } catch {
-        // ignore storage issues in demo mode
-      }
-      return createInitialState(DEFAULT_USER_ID)
+      return { ...createInitialState(), users: state.users, departments: state.departments }
     default:
       return state
   }
@@ -495,26 +419,85 @@ function reducer(state, action) {
 
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, undefined, readInitialState)
+  const { user: authenticatedUser } = useAuth()
+  const [directoryError, setDirectoryError] = useState('')
+  const [directoryLoading, setDirectoryLoading] = useState(false)
 
   const persist = useCallback((nextState) => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState))
+      const prototypeState = { ...nextState }
+      delete prototypeState.users
+      delete prototypeState.departments
+      delete prototypeState.currentUserId
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(prototypeState))
     } catch {
-      // storage unavailable in the browser demo
+      // Browser storage may be unavailable.
     }
   }, [])
 
-  const currentUser = useMemo(() => state.users.find((u) => u.id === state.currentUserId), [state.users, state.currentUserId])
-  const role = currentUser?.role ?? 'manager'
+  const refreshDirectory = useCallback(async () => {
+    if (!authenticatedUser) {
+      dispatch({ type: 'SET_DIRECTORY', users: [], departments: [] })
+      setDirectoryError('')
+      setDirectoryLoading(false)
+      return []
+    }
 
-  const switchRole = useCallback((r) => dispatch({ type: 'SWITCH_ROLE', role: r }), [])
+    setDirectoryError('')
+    setDirectoryLoading(true)
+    try {
+      const canReadDepartments = ['SUPERADMIN', 'ADMIN', 'MANAGER', 'HR'].includes(String(authenticatedUser.role).toUpperCase())
+      const [response, departmentsResponse] = await Promise.all([
+        apiClient.employees.list(),
+        canReadDepartments ? apiClient.departments.list() : Promise.resolve({ data: [] }),
+      ])
+      if (!Array.isArray(response?.data)) throw new Error('The employee list response was invalid.')
+      if (!Array.isArray(departmentsResponse?.data)) throw new Error('The department list response was invalid.')
+      const users = response.data.map((employee) => ({
+        ...employee,
+        role: String(employee.role || '').toLowerCase(),
+        status: String(employee.status || '').toUpperCase() === 'ACTIVE'
+          ? 'Active'
+          : String(employee.status || '').toUpperCase() === 'INACTIVE' ? 'Inactive' : 'On Leave',
+        department: employee.department ?? null,
+        departmentId: employee.departmentId ?? employee.department?.id ?? null,
+      }))
+      const departments = departmentsResponse.data.sort((left, right) => left.name.localeCompare(right.name))
+      dispatch({ type: 'SET_DIRECTORY', users, departments })
+      return users
+    } catch (error) {
+      dispatch({ type: 'SET_DIRECTORY', users: [], departments: [] })
+      setDirectoryError(error instanceof Error ? error.message : 'The employee directory could not be loaded.')
+      throw error
+    } finally {
+      setDirectoryLoading(false)
+    }
+  }, [authenticatedUser])
+
+  useEffect(() => {
+    refreshDirectory().catch(() => {})
+  }, [refreshDirectory])
+
+  const currentUser = useMemo(() => {
+    if (!authenticatedUser) return null
+    return {
+      ...authenticatedUser,
+      role: authenticatedUser.role.toLowerCase(),
+      status: authenticatedUser.status === 'ACTIVE' ? 'Active' : authenticatedUser.status === 'INACTIVE' ? 'Inactive' : 'On Leave',
+      scopeDepartmentIds: authenticatedUser.departmentScopeIds?.length
+        ? authenticatedUser.departmentScopeIds
+        : undefined,
+    }
+  }, [authenticatedUser])
+  const role = currentUser?.role ?? 'executive'
+
   const markNotificationRead = useCallback((id) => {
     const notification = state.notifications.find((item) => item.id === id)
-    if (!notification || notification.userId !== currentUser.id) return false
+    if (!notification || notification.userId !== currentUser?.id) return false
     dispatch({ type: 'MARK_NOTIFICATION_READ', id })
     return true
-  }, [currentUser.id, state.notifications])
-  const markAllRead = useCallback(() => dispatch({ type: 'MARK_ALL_READ', userId: state.currentUserId }), [state.currentUserId])
+  }, [currentUser?.id, state.notifications])
+  const markAllRead = useCallback(() => dispatch({ type: 'MARK_ALL_READ', userId: currentUser?.id }), [currentUser?.id])
   const resetDemo = useCallback(() => dispatch({ type: 'RESET_DEMO' }), [])
 
   const updateTask = useCallback((id, changes) => {
@@ -789,49 +772,9 @@ export function AppProvider({ children }) {
     return true
   }, [currentUser, state.activity, state.projects])
 
-  const updateEmployee = useCallback((id, changes) => {
-    const employee = state.users.find((user) => user.id === id)
-    if (!canManageUser(currentUser, employee, changes).allowed) return false
-    const departmentId = changes.departmentId ?? employee?.departmentId
-    const managerId = changes.managerId ?? employee?.managerId
-    if ((changes.id !== undefined && changes.id !== id) || !validManagerAssignment(managerId, departmentId, state.users)) return false
-    dispatch({ type: 'UPDATE_USER', id, changes })
-    return true
-  }, [currentUser, state.users])
-
-  const createEmployee = useCallback((employee) => {
-    if (!employee?.id) {
-      return
-    }
-
-    const exists = state.users.some((user) => user.id === employee.id)
-    const existing = state.users.find((user) => user.id === employee.id)
-    const allowed = canManageUser(currentUser, existing, { role: employee.role, departmentId: employee.departmentId })
-    if (!allowed.allowed || (existing && employee.id !== existing.id) || !validManagerAssignment(employee.managerId, employee.departmentId, state.users)) return false
-    dispatch({ type: exists ? 'UPDATE_USER' : 'ADD_USER', id: employee.id, user: employee, changes: employee })
-    return true
-  }, [currentUser, state.users])
-
-  const updateDepartment = useCallback((id, changes) => {
-    const department = state.departments.find((item) => item.id === id)
-    if (!canManageDepartment(currentUser, department).allowed) return false
-    if (changes.headId && !state.users.some((user) => user.id === changes.headId && user.departmentId === id)) return false
-    dispatch({ type: 'UPDATE_DEPARTMENT', id, changes })
-    return true
-  }, [currentUser, state.departments, state.users])
-
-  const createDepartment = useCallback((department) => {
-    if (!canCreateDepartment(currentUser).allowed) return false
-    const id = department.id && !state.departments.some((item) => item.id === department.id)
-      ? department.id
-      : makeUniqueId('d', state.departments)
-    dispatch({ type: 'ADD_DEPARTMENT', department: { ...department, id } })
-    return id
-  }, [currentUser, state.departments])
-
   const value = useMemo(() => {
     const myNotifications = state.notifications
-      .filter((n) => n.userId === state.currentUserId)
+      .filter((n) => n.userId === currentUser?.id)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
     return {
@@ -839,15 +782,17 @@ export function AppProvider({ children }) {
       currentUser,
       role,
       roleInfo: ROLES[role],
-      department: state.departments.find((d) => d.id === currentUser?.departmentId),
+      department: currentUser?.department ?? state.departments.find((d) => d.id === currentUser?.departmentId),
       notifications: myNotifications,
       unreadCount: myNotifications.filter((n) => !n.read).length,
+      directoryError,
+      directoryLoading,
+      refreshDirectory,
       can: (permission) => canRole(role, permission),
       getUser: (id) => state.users.find((u) => u.id === id),
       getDepartment: (id) => state.departments.find((d) => d.id === id),
       getTaskById: (id) => state.tasks.find((task) => task.id === id),
       getTicketById: (id) => state.tickets.find((ticket) => ticket.id === id),
-      switchRole,
       markNotificationRead,
       markAllRead,
       resetDemo,
@@ -868,10 +813,6 @@ export function AppProvider({ children }) {
       createProject,
       updateProject,
       deleteProject,
-      updateEmployee,
-      createEmployee,
-      updateDepartment,
-      createDepartment,
       dueSoon: state.tasks.filter((task) => task.dueDate && !['Completed', 'Cancelled'].includes(task.status) && task.dueDate <= daysFromNow(3)),
       priorityWeight: sortByPriority,
       statusOptions: ['Backlog', 'To Do', 'In Progress', 'In Review', 'Blocked', 'Completed'],
@@ -879,7 +820,7 @@ export function AppProvider({ children }) {
       ticketStatuses: ['Open', 'Triaged', 'In Progress', 'Waiting for Requester', 'Escalated', 'Resolved', 'Closed'],
       saveDemoState: persist,
     }
-  }, [state, currentUser, role, switchRole, markNotificationRead, markAllRead, resetDemo, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addActivity, addNotification, createTicket, updateTicket, addTicketUpdate, generateProjectId, createProject, updateProject, deleteProject, updateEmployee, createEmployee, updateDepartment, createDepartment, persist])
+  }, [state, currentUser, role, directoryError, directoryLoading, refreshDirectory, markNotificationRead, markAllRead, resetDemo, updateTask, createTask, deleteTask, addTaskComment, addSubtask, updateSubtask, deleteSubtask, addSubtaskComment, addActivity, addNotification, createTicket, updateTicket, addTicketUpdate, generateProjectId, createProject, updateProject, deleteProject, persist])
 
   useEffect(() => {
     persist(state)

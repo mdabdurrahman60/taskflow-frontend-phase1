@@ -75,7 +75,7 @@ function addEmployeeSection(doc, report, range, startY, { includeTasks = true } 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(...GRAY)
-  doc.text(departmentName, 14, y + 6)
+  doc.text(`Employee ID: ${employee.employeeId || 'Not applicable'} · ${departmentName}`, 14, y + 6)
   autoTable(doc, {
     startY: y + 10,
     head: [['Metric', 'Value']],
@@ -158,7 +158,7 @@ function addTopSummary(doc, report, startY) {
 
 export function createEmployeePerformancePdf({ report, range, employee }) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' })
-  let y = reportTitle(doc, 'Employee Performance Report', range, `${employee.name} · ${employee.roleLabel}`)
+  let y = reportTitle(doc, 'Employee Performance Report', range, `${employee.employeeId ? `${employee.employeeId} · ` : ''}${employee.name} · ${employee.roleLabel}`)
   const employeeReport = report.employees.find((item) => item.employee.id === employee.id)
   if (!employeeReport) throw new Error('The selected employee is not available in this report scope.')
   y = addTopSummary(doc, report, y)
@@ -179,8 +179,9 @@ export function createTeamPerformancePdf({ report, range, statusLabel = 'All sta
   y = addTopSummary(doc, report, y)
   autoTable(doc, {
     startY: y,
-    head: [['Employee', 'Role', 'Department', 'Created', 'Completed now', 'Completion', 'In progress', 'Pending', 'Overdue']],
+    head: [['Employee ID', 'Employee', 'Role', 'Department', 'Created', 'Completed now', 'Completion', 'In progress', 'Pending', 'Overdue']],
     body: report.employees.map((item) => [
+      item.employee.employeeId || '',
       item.employee.name,
       item.employee.roleLabel,
       item.employee.departmentName,

@@ -64,11 +64,13 @@ export default function TeamTasksPage() {
           </div>
           <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]">
             <option value="All">All departments</option>
+            {departments.length === 0 && <option value="" disabled>No departments available</option>}
             {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </select>
           <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]">
             <option value="All">All assignees</option>
-            {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+            {users.length === 0 && <option value="" disabled>No employees available</option>}
+            {users.map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)}
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]">
             <option value="All">All status</option>
@@ -94,7 +96,7 @@ export default function TeamTasksPage() {
                 {task.description && <TaskDescription value={task.description} />}
 
                 <div className="flex items-center justify-between text-[12px] text-muted">
-                  <span>{assignee?.name ?? 'Unassigned'}</span>
+                  <span>{assignee ? `${assignee.employeeId ? `${assignee.employeeId} · ` : ''}${assignee.name}` : 'Unassigned'}</span>
                   <span>{task.dueDate ? `Due ${task.dueDate}` : 'No due date'}</span>
                 </div>
 

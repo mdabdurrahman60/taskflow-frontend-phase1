@@ -9,6 +9,8 @@ import {
   Building2,
   ChartColumn,
   Settings,
+  UserRound,
+  Warehouse,
 } from 'lucide-react'
 import { ROLE_KEYS } from '../data/roles'
 
@@ -33,6 +35,7 @@ export const NAV_GROUPS = [
       },
       { key: 'projects', path: '/projects', label: 'Projects', icon: FolderKanban, roles: ['superadmin', 'admin', 'manager', 'hr', 'support', 'executive'] },
       { key: 'kanban', path: '/kanban', label: 'Kanban Board', icon: Columns3, roles: ALL },
+      { key: 'warehouse', path: '/warehouse', label: 'Warehouse & POs', icon: Warehouse, roles: ALL },
     ],
   },
   {
@@ -43,14 +46,15 @@ export const NAV_GROUPS = [
     label: 'Organization',
     items: [
       { key: 'employees', path: '/employees', label: 'Employees', icon: Contact, roles: ['superadmin', 'admin', 'manager', 'hr'] },
-      { key: 'departments', path: '/departments', label: 'Departments', icon: Building2, roles: ['superadmin', 'admin'] },
+      { key: 'departments', path: '/departments', label: 'Departments', icon: Building2, roles: ['superadmin', 'admin', 'manager', 'hr'] },
       { key: 'reports', path: '/reports', label: 'Reports', icon: ChartColumn, roles: ['superadmin', 'admin', 'manager', 'hr', 'support'] },
-      { key: 'employee-performance-reports', path: '/employee-performance-reports', label: 'Employee Performance Reports', icon: ChartColumn, roles: ['superadmin', 'admin', 'manager'] },
+      { key: 'employee-performance-reports', path: '/employee-performance-reports', label: 'Performance & KPI', icon: ChartColumn, roles: ['superadmin', 'admin', 'manager'] },
     ],
   },
   {
     label: 'System',
       items: [
+        { key: 'profile', path: '/profile', label: 'My Profile', icon: UserRound, roles: ALL },
         { key: 'settings', path: '/settings', label: 'Settings', icon: Settings, roles: ALL },
         { key: 'role-permissions', path: '/role-permissions', label: 'Role Permissions', icon: Settings, roles: ['superadmin', 'admin', 'manager', 'hr'] },
       ],

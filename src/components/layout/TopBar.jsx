@@ -5,7 +5,6 @@ import GlobalSearch from './GlobalSearch'
 import NotificationBell from './NotificationBell'
 import ProfileMenu from './ProfileMenu'
 import QuickCreate from './QuickCreate'
-import RoleSwitcher from './RoleSwitcher'
 
 export default function TopBar({ onMenu }) {
   const [mobileSearch, setMobileSearch] = useState(false)
@@ -38,7 +37,6 @@ export default function TopBar({ onMenu }) {
         >
           <Search className="h-[18px] w-[18px]" />
         </button>
-        <RoleSwitcher />
         <QuickCreate />
         <NotificationBell />
         <ProfileMenu />

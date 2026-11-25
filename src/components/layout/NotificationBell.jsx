@@ -1,7 +1,10 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Bell, CheckCheck, Clock, LifeBuoy, ListChecks, MessageSquare, TriangleAlert, Info } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Popover from '../ui/Popover'
 import { useApp } from '../../store/useApp'
+import { apiClient } from '../../api/apiClient.js'
+import { useToast } from '../ui/useToast.js'
 import { timeAgo } from '../../utils/dates'
 
 const TYPE_ICONS = {
@@ -14,8 +17,53 @@ const TYPE_ICONS = {
 }
 
 export default function NotificationBell() {
-  const { notifications, unreadCount, markNotificationRead, markAllRead } = useApp()
+  const { notifications: localNotifications, markNotificationRead: markLocalRead, markAllRead: markAllLocalRead } = useApp()
   const navigate = useNavigate()
+  const toast = useToast()
+  const [backendNotifications, setBackendNotifications] = useState([])
+
+  useEffect(() => {
+    let active = true
+    apiClient.notifications.list()
+      .then((response) => {
+        if (!Array.isArray(response?.data)) throw new Error('The notification response was invalid.')
+        if (active) {
+          setBackendNotifications(response.data.map((notification) => ({
+            ...notification,
+            type: String(notification.type || 'SYSTEM').toLowerCase(),
+            read: Boolean(notification.readAt),
+          })))
+        }
+      })
+      .catch((error) => {
+        if (active) toast({ title: 'Notifications unavailable', description: error.message, type: 'error' })
+      })
+    return () => { active = false }
+  }, [toast])
+
+  const backendIds = useMemo(() => new Set(backendNotifications.map((notification) => notification.id)), [backendNotifications])
+  const notifications = useMemo(() => [...backendNotifications, ...localNotifications]
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+    .slice(0, 50), [backendNotifications, localNotifications])
+  const unreadCount = notifications.filter((notification) => !notification.read).length
+
+  const markNotificationRead = (id) => {
+    if (!backendIds.has(id)) {
+      markLocalRead(id)
+      return
+    }
+    apiClient.notifications.markRead(id)
+      .then(() => setBackendNotifications((previous) => previous.map((notification) => notification.id === id ? { ...notification, read: true } : notification)))
+      .catch((error) => toast({ title: 'Notification not updated', description: error.message, type: 'error' }))
+  }
+
+  const markAllRead = () => {
+    markAllLocalRead()
+    if (!backendNotifications.some((notification) => !notification.read)) return
+    apiClient.notifications.markAllRead()
+      .then(() => setBackendNotifications((previous) => previous.map((notification) => ({ ...notification, read: true }))))
+      .catch((error) => toast({ title: 'Notifications not updated', description: error.message, type: 'error' }))
+  }
 
   return (
     <Popover
@@ -71,7 +119,7 @@ export default function NotificationBell() {
                       onClick={() => {
                         markNotificationRead(n.id)
                         close()
-                        navigate(n.link)
+                        navigate(n.link || '/')
                       }}
                       className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface ${n.read ? '' : 'bg-brand-50/40'}`}
                     >

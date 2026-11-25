@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { apiClient } from '../../api/apiClient.js'
+
 // Initials avatar with a stable, muted colour per person.
 const TONES = [
   'bg-slate-100 text-slate-700',
@@ -30,13 +33,30 @@ function initials(name) {
 export default function Avatar({ user, name, size = 'md', className = '' }) {
   const label = user?.name ?? name ?? '?'
   const tone = TONES[hash(user?.id ?? label) % TONES.length]
+  const avatarUrl = user?.avatarUrl
+    ? user.avatarUrl.startsWith('http') ? user.avatarUrl : `${apiClient.baseUrl}${user.avatarUrl}`
+    : null
+  const [imageFailed, setImageFailed] = useState(false)
+  useEffect(() => {
+    setImageFailed(false)
+  }, [avatarUrl])
+
   return (
     <span
       title={label}
       aria-label={label}
-      className={`inline-flex shrink-0 select-none items-center justify-center rounded-full font-semibold ${tone} ${SIZES[size]} ${className}`}
+      className={`relative inline-flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full font-semibold ${tone} ${SIZES[size]} ${className}`}
     >
-      {initials(label)}
+      {avatarUrl && !imageFailed ? (
+        <img
+          src={avatarUrl}
+          alt=""
+          crossOrigin="use-credentials"
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : initials(label)}
     </span>
   )
 }

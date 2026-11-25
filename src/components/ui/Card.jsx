@@ -1,5 +1,5 @@
-export function Card({ className = '', children }) {
-  return <section className={`rounded-lg border border-line bg-white shadow-card ${className}`}>{children}</section>
+export function Card({ id, className = '', children }) {
+  return <section id={id} className={`rounded-lg border border-line bg-white shadow-card ${className}`}>{children}</section>
 }
 
 export function CardHeader({ title, subtitle, action, className = '' }) {

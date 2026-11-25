@@ -511,11 +511,12 @@ export default function MyTasksPage() {
             <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px] text-ink">
               <option value={ALL}>All assignee</option>
               {users.filter((user) => visibleTasks.some((task) => task.assigneeId === user.id)).map((user) => (
-                <option key={user.id} value={user.id}>{user.name}</option>
+                <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>
               ))}
             </select>
             <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="h-9 rounded-md border border-line bg-white px-2 text-[13px] text-ink">
               <option value={ALL}>All departments</option>
+              {departments.length === 0 && <option value="" disabled>No departments available</option>}
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>{department.name}</option>
               ))}
@@ -647,7 +648,7 @@ export default function MyTasksPage() {
                     {subtaskErrors.title && <p className="text-[11px] text-brand-700">{subtaskErrors.title}</p>}
                     <div className="grid gap-2 sm:grid-cols-2">
                       <select disabled={!eligibleSubtaskAssignees.length} value={newSubtask.assigneeId} onChange={(e) => setNewSubtask({ ...newSubtask, assigneeId: e.target.value })} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]">
-                        {eligibleSubtaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                        {eligibleSubtaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)}
                       </select>
                       <input type="date" value={newSubtask.dueDate} onChange={(e) => setNewSubtask({ ...newSubtask, dueDate: e.target.value })} className="h-9 rounded-md border border-line bg-white px-2 text-[13px]" />
                     </div>
@@ -679,7 +680,7 @@ export default function MyTasksPage() {
                         </div>
                         <div className="mt-2 grid gap-2 sm:grid-cols-2">
                           {canEditTask(currentUser, selectedTask).allowed && <select value={subtask.assigneeId} onChange={(e) => handleSubtaskReassign(selectedTask.id, subtask.id, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">
-                            {eligibleSubtaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                            {eligibleSubtaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)}
                           </select>}
                           {canChangeTaskStatus(currentUser, selectedTask).allowed && <select value={subtask.status} onChange={(e) => handleSubtaskToggle(selectedTask.id, subtask.id, e.target.value)} className="h-8 rounded-md border border-line bg-white px-2 text-[11px]">
                             {['To Do', 'In Progress', 'In Review', 'Blocked', 'Completed'].map((status) => <option key={status} value={status}>{status}</option>)}
@@ -777,8 +778,8 @@ export default function MyTasksPage() {
                   <label htmlFor="task-assignee" className="mb-1 block text-[12px] font-medium text-ink">Assignee</label>
                   <select id="task-assignee" value={taskForm.assigneeId} onChange={(e) => setTaskForm({ ...taskForm, assigneeId: e.target.value })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
                     {eligibleTaskAssignees.length ? (
-                      eligibleTaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)
-                    ) : null}
+                      eligibleTaskAssignees.map((user) => <option key={user.id} value={user.id}>{user.employeeId ? `${user.employeeId} · ` : ''}{user.name}</option>)
+                    ) : <option value="" disabled>No employees available</option>}
                   </select>
                   {!eligibleTaskAssignees.length && <p className="mt-1 text-[11px] text-muted">No eligible assignees for this task scope. Change the type, department, or parent task.</p>}
                   {taskErrors.assigneeId && <p className="mt-1 text-[11px] text-brand-700">{taskErrors.assigneeId}</p>}
@@ -786,6 +787,7 @@ export default function MyTasksPage() {
                 <div>
                   <label htmlFor="task-department" className="mb-1 block text-[12px] font-medium text-ink">Department</label>
                   <select id="task-department" value={taskForm.departmentId} onChange={(e) => setTaskForm({ ...taskForm, departmentId: e.target.value, projectId: accessibleProjects.some((project) => project.id === taskForm.projectId && project.departmentId === e.target.value) ? taskForm.projectId : '' })} className="h-10 w-full rounded-md border border-line bg-surface px-2.5 text-[13px]">
+                    {departments.length === 0 && <option value="" disabled>No departments available</option>}
                     {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
                   </select>
                   {taskErrors.departmentId && <p className="mt-1 text-[11px] text-brand-700">{taskErrors.departmentId}</p>}

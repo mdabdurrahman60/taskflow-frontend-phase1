@@ -20,14 +20,14 @@ export function searchGlobal(query, { navGroups, users, departments, canViewDire
 
   const people = canViewDirectory
     ? users
-        .filter((u) => u.name.toLowerCase().includes(q) || u.title.toLowerCase().includes(q))
+        .filter((u) => u.name.toLowerCase().includes(q) || u.title.toLowerCase().includes(q) || u.employeeId?.toLowerCase().includes(q))
         .slice(0, 5)
         .map((u) => ({
           type: 'person',
           id: `person-${u.id}`,
           label: u.name,
-          hint: `${u.title} · ${deptName(u.departmentId)}`,
-          to: `/employees?q=${encodeURIComponent(u.name)}`,
+          hint: `${u.employeeId ? `${u.employeeId} · ` : ''}${u.title} · ${deptName(u.departmentId)}`,
+          to: `/employees?q=${encodeURIComponent(u.employeeId || u.name)}`,
           user: u,
         }))
     : []

@@ -1,14 +1,15 @@
-import { ChevronDown, RotateCcw, Settings } from 'lucide-react'
+import { ChevronDown, LogOut, RotateCcw, Settings, UserRound } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Avatar from '../ui/Avatar'
 import Badge from '../ui/Badge'
 import Popover from '../ui/Popover'
 import { useToast } from '../ui/useToast'
-import RoleList from './RoleList'
 import { useApp } from '../../store/useApp'
+import { useAuth } from '../../auth/AuthContext.jsx'
 
 export default function ProfileMenu() {
   const { currentUser, roleInfo, department, resetDemo } = useApp()
+  const { logout } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
 
@@ -48,12 +49,21 @@ export default function ProfileMenu() {
             </div>
           </div>
 
-          <div className="border-b border-line-soft">
-            <p className="px-4 pb-0 pt-2.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Demo role</p>
-            <RoleList onSelected={close} />
-          </div>
-
           <ul className="p-1.5" role="menu">
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close()
+                  navigate('/profile')
+                }}
+                className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] text-ink-2 hover:bg-surface-2"
+              >
+                <UserRound className="h-4 w-4 text-muted" aria-hidden="true" />
+                My Profile
+              </button>
+            </li>
             <li role="none">
               <button
                 type="button"
@@ -75,12 +85,31 @@ export default function ProfileMenu() {
                 onClick={() => {
                   resetDemo()
                   close()
-                  toast({ title: 'Demo data reset', description: 'All sample data is back to its starting state.' })
+                  toast({ title: 'Prototype work reset', description: 'Local tasks, projects and tickets were reset. Employee and department data were not changed.' })
                 }}
                 className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] text-ink-2 hover:bg-surface-2"
               >
                 <RotateCcw className="h-4 w-4 text-muted" aria-hidden="true" />
-                Reset demo data
+                Reset prototype work data
+              </button>
+            </li>
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  try {
+                    await logout()
+                    close()
+                    navigate('/login', { replace: true })
+                  } catch (error) {
+                    toast({ title: 'Could not sign out', description: error.message, type: 'error' })
+                  }
+                }}
+                className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] text-ink-2 hover:bg-surface-2"
+              >
+                <LogOut className="h-4 w-4 text-muted" aria-hidden="true" />
+                Sign out
               </button>
             </li>
           </ul>
